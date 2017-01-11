@@ -9,9 +9,9 @@
 
 
 //define pins variables
-#define TRIGGER_PIN D1 //nodemcu notation
+#define TRIGGER_PIN D6 //nodemcu notation
 #define ONBOARD_LED D0 //nodemcu notation
-#define DHTPIN D2 // what pin we’re connected to
+#define DHTPIN D5 // what pin we’re connected to
 
 //mqtt config variables
 WiFiClient espClient;
@@ -145,7 +145,7 @@ void startAPConfigPortal(){
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_pass);
 
-  if (!wifiManager.startConfigPortal("esp-ap-config","admin")) {
+  if (!wifiManager.startConfigPortal("esp-ap-config","k4k4r0t0")) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
