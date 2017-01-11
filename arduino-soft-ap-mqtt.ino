@@ -145,7 +145,7 @@ void startAPConfigPortal(){
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_pass);
 
-  if (!wifiManager.startConfigPortal("OnDemandAP")) {
+  if (!wifiManager.startConfigPortal("esp-ap-config","admin")) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
