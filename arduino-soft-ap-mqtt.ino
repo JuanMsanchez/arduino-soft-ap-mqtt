@@ -12,6 +12,7 @@
 #define TRIGGER_PIN D6 //nodemcu notation
 #define ONBOARD_LED D0 //nodemcu notation
 #define DHTPIN D5 // what pin we’re connected to
+#define RELAY_PIN D3 //nodemcu notation
 
 //mqtt config variables
 WiFiClient espClient;
@@ -38,12 +39,15 @@ void setup() {
   //set the pin modes
   pinMode(TRIGGER_PIN, INPUT);
   pinMode(ONBOARD_LED, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, HIGH); //realay off
   digitalWrite(ONBOARD_LED, HIGH);
   Serial.begin(115200);
   Serial.println("\n Starting");
   delay(10);
   dht.begin();//init dht sensor
   client.setServer(mqtt_srvr, mqtt_port);//start the mqtt client
+  client.setCallback(callback);
   loadFSconfig(); //load the configuration from the filesystem
   loopCounter = 0;
 }
@@ -93,11 +97,17 @@ void loop() {
     Serial.println(mqtt_pass);
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
       Serial.println("connected to mqtt server");
+      char relayTopic[40];
+      sprintf(relayTopic, "users/%s/relay", mqtt_user);
+      client.subscribe(relayTopic);
+      Serial.print("subscribed to ");
+      Serial.println(relayTopic);
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
     }
   }else{
+    client.loop();
     // Once connected, start publishing...
     float t= dht.readHumidity();
     float h= dht.readHumidity(); 
@@ -112,8 +122,8 @@ void loop() {
     }  
     
     char topic[40];
-    char data[40];
     sprintf(topic, "users/%s/", mqtt_user);
+    char data[40];
     sprintf(data, "{\"temperature\":%s;\"humidity\":%s}", temperature, humidity);
 
     loopCounter++;
@@ -202,5 +212,24 @@ void loadFSconfig(){
     }
   } else {
     Serial.println("failed to mount FS");
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(RELAY_PIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is acive low on the ESP-01)
+  } else {
+    digitalWrite(RELAY_PIN, HIGH);  // Turn the LED off by making the voltage HIGH
   }
 }
