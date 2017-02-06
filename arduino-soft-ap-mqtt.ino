@@ -12,7 +12,8 @@
 #define TRIGGER_PIN D6 //nodemcu notation
 #define ONBOARD_LED D0 //nodemcu notation
 #define DHTPIN D5 // what pin we’re connected to
-#define RELAY_PIN D3 //nodemcu notation
+#define RELAY1_PIN D3 //nodemcu notation
+#define RELAY2_PIN D4 //nodemcu notation
 
 //mqtt config variables
 WiFiClient espClient;
@@ -21,6 +22,9 @@ int  mqtt_port = 1883;
 char mqtt_srvr[40] = "192.168.0.14";
 char mqtt_user[40];
 char mqtt_pass[40];
+char mqtt_alias[40];
+char relay1_alias[40] = "relay1";
+char relay2_alias[40] = "relay2";
 
 //set dht pin and model
 DHT dht(DHTPIN, DHT11,15);
@@ -31,17 +35,24 @@ int loopCounter;
 // id/name placeholder/prompt default length
 WiFiManagerParameter custom_mqtt_user("mqtt_user", "mqtt user", mqtt_user, 40);
 WiFiManagerParameter custom_mqtt_pass("mqtt_password", "mqtt password", mqtt_pass, 40);
+WiFiManagerParameter custom_mqtt_alias("mqtt_alias", "mqtt_alias", mqtt_alias, 40);
+WiFiManagerParameter custom_relay1_alias("relay1_alias", "relay1_alias", relay1_alias, 40);
+WiFiManagerParameter custom_relay2_alias("relay2_alias", "relay2_alias", relay2_alias, 40);
 
 //flag for saving data to the filesystem
 bool shouldSaveConfig = false;
+String clientId;
 
 void setup() {
   //set the pin modes
   pinMode(TRIGGER_PIN, INPUT);
   pinMode(ONBOARD_LED, OUTPUT);
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH); //realay off
+  pinMode(RELAY1_PIN, OUTPUT);
+  pinMode(RELAY2_PIN, OUTPUT);
+  digitalWrite(RELAY1_PIN, HIGH); //realay off
+  digitalWrite(RELAY2_PIN, HIGH); //realay off
   digitalWrite(ONBOARD_LED, HIGH);
+  clientId = String(ESP.getChipId());
   Serial.begin(115200);
   Serial.println("\n Starting");
   delay(10);
@@ -62,14 +73,16 @@ void loop() {
   if (shouldSaveConfig) {
     //set mqtt_pass and mqtt_user with the AP form inputs values
     strcpy(mqtt_pass, custom_mqtt_pass.getValue());
-    strcpy(mqtt_user, custom_mqtt_user.getValue());    
-    
+    strcpy(mqtt_user, custom_mqtt_user.getValue());
+    strcpy(mqtt_alias, custom_mqtt_alias.getValue());
+
     Serial.println("saving config");
     //DynamicJsonBuffer jsonBuffer;
-    StaticJsonBuffer<100> jsonBuffer;
+    StaticJsonBuffer<200> jsonBuffer;
     JsonObject& json = jsonBuffer.createObject();
     json["mqtt_user"] = mqtt_user;
     json["mqtt_pass"] = mqtt_pass;
+    json["mqtt_alias"] = mqtt_alias;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
@@ -78,30 +91,37 @@ void loop() {
 
     json.printTo(Serial);
     Serial.println("");
-    
-    json.printTo(configFile);    
+
+    json.printTo(configFile);
     configFile.close();
     shouldSaveConfig = false; //reset the saveConfigCallback flag
   }
 
   if(!client.connected()){
     Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(ESP.getChipId());
-     
+
     // Attempt to connect
     Serial.print("mqtt_user=");
     Serial.print(mqtt_user);
     Serial.print(" mqtt_pass=");
-    Serial.println(mqtt_pass);
+    Serial.print(mqtt_pass);
+    Serial.print(" mqtt_alias=");
+    Serial.println(mqtt_alias);
+
+    //if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
       Serial.println("connected to mqtt server");
       char relayTopic[40];
-      sprintf(relayTopic, "users/%s/relay", mqtt_user);
+      char reportTopic[40];
+      
+      sprintf(relayTopic, "users/%s/%s/actuator/#", mqtt_user, clientId.c_str());
+      sprintf(reportTopic, "users/%s/report", mqtt_user);
       client.subscribe(relayTopic);
+      client.subscribe(reportTopic);
       Serial.print("subscribed to ");
       Serial.println(relayTopic);
+      Serial.print("subscribed to ");
+      Serial.println(reportTopic);      
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -110,30 +130,44 @@ void loop() {
     client.loop();
     // Once connected, start publishing...
     float t= dht.readHumidity();
-    float h= dht.readHumidity(); 
+    float h= dht.readHumidity();
     char humidity[4];
     char temperature[4];
 
+    //here we grab the last valid value
     if( !isnan(t) ){
       dtostrf(h,4, 2, humidity);
     }
     if( !isnan(t) ){
       dtostrf(t,4, 2, temperature);
-    }  
-    
-    char topic[40];
-    sprintf(topic, "users/%s/", mqtt_user);
-    char data[40];
-    sprintf(data, "{\"temperature\":%s;\"humidity\":%s}", temperature, humidity);
+    }
 
+    char tempTopic[40];
+    char humTopic[40];
+
+    sprintf(tempTopic, "users/%s/%s/sensor/temperature", mqtt_user, clientId.c_str());
+    sprintf(humTopic, "users/%s/%s/sensor/humidity", mqtt_user, clientId.c_str());
+
+    char tempData[40];
+    char humData[40];
+    sprintf(tempData, "{\"value\":%s,\"origin\":\"%s\"}", temperature, mqtt_alias);
+    sprintf(humData, "{\"value\":%s,\"origin\":\"%s\"}", humidity, mqtt_alias);
+
+    //three iterations before publishing
     loopCounter++;
     if(loopCounter == 3){
       Serial.print("publishing to topic: ");
-      Serial.print(topic);
+      Serial.print(tempTopic);
       Serial.print(" with data: ");
-      Serial.println(data);      
-      
-      client.publish(topic, data);
+      Serial.println(tempData);
+      client.publish(tempTopic, tempData);
+
+      Serial.print("publishing to topic: ");
+      Serial.print(humTopic);
+      Serial.print(" with data: ");
+      Serial.println(humData);
+      client.publish(humTopic, humData);
+
       loopCounter = 0;
       Serial.println("6 seconds delay");
     }
@@ -154,8 +188,11 @@ void startAPConfigPortal(){
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_pass);
+  wifiManager.addParameter(&custom_mqtt_alias);
 
-  if (!wifiManager.startConfigPortal("esp-ap-config","k4k4r0t0")) {
+  String apNetworkName = "iot-" + clientId;
+   
+  if (!wifiManager.startConfigPortal(apNetworkName.c_str())) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -193,18 +230,20 @@ void loadFSconfig(){
 
         configFile.readBytes(buf.get(), size);
         //DynamicJsonBuffer jsonBuffer;
-        StaticJsonBuffer<100> jsonBuffer;
+        StaticJsonBuffer<200> jsonBuffer;
         JsonObject& json = jsonBuffer.parseObject(buf.get());
         json.printTo(Serial);
         if (json.success()) {
           Serial.println("\nparsed json");
-
+          strcpy(mqtt_alias, json["mqtt_alias"]);
           strcpy(mqtt_user, json["mqtt_user"]);
           strcpy(mqtt_pass, json["mqtt_pass"]);
           Serial.print("mqtt_user=");
           Serial.print(mqtt_user);
           Serial.print(" mqtt_pass=");
-          Serial.println(mqtt_pass);
+          Serial.print(mqtt_pass);
+          Serial.print(" mqtt_alias=");
+          Serial.println(mqtt_alias);
         } else {
           Serial.println("failed to load json config");
         }
@@ -216,20 +255,38 @@ void loadFSconfig(){
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
+  Serial.print("Message arrived: ");
   Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
+  Serial.println();
+  Serial.print("With payload: ");
+  for (int i=0;i<length;i++) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
 
+  char currentTopic[50];
+  char * params;
+  params = strtok(topic, "/");
+
+  while (params != NULL){
+    strcpy(currentTopic, params);
+    params = strtok (NULL, "/");
+  } 
+
+  Serial.print("Current topic: ");
+  Serial.println(currentTopic);
+  
+  if(strcmp(currentTopic,"report") == 0){
+    Serial.println("Registering device");
+    char reportTopic[40];
+    sprintf(reportTopic, "users/%s/%s/register", mqtt_user, clientId.c_str());
+    client.publish(reportTopic, "{\"sensors\": [ \"temperature\",\"humidity\" ], \"actuators\": [\"cooler\", \"ligth\"]}");
+  }
+  
   // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(RELAY_PIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
+  if ((char)payload[0] == 'true') {
+    digitalWrite(RELAY1_PIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
   } else {
-    digitalWrite(RELAY_PIN, HIGH);  // Turn the LED off by making the voltage HIGH
+    digitalWrite(RELAY1_PIN, HIGH);  // Turn the LED off by making the voltage HIGH
   }
 }
