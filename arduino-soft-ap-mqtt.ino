@@ -114,7 +114,7 @@ void loop() {
       char relayTopic[40];
       char reportTopic[40];
       
-      sprintf(relayTopic, "users/%s/%s/actuator/#", mqtt_user, clientId.c_str());
+      sprintf(relayTopic, "users/%s/%s/write/actuator/#", mqtt_user, clientId.c_str());
       sprintf(reportTopic, "users/%s/report", mqtt_user);
       client.subscribe(relayTopic);
       client.subscribe(reportTopic);
@@ -129,11 +129,15 @@ void loop() {
   }else{
     client.loop();
     // Once connected, start publishing...
-    float t= dht.readHumidity();
+    float t= dht.readTemperature();
     float h= dht.readHumidity();
-    char humidity[4];
-    char temperature[4];
-
+    int r1= digitalRead(RELAY1_PIN);
+    int r2= digitalRead(RELAY2_PIN);
+    char humidity[6];
+    char temperature[6];
+    char relay1[6];
+    char relay2[6];
+    
     //here we grab the last valid value
     if( !isnan(t) ){
       dtostrf(h,4, 2, humidity);
@@ -142,38 +146,61 @@ void loop() {
       dtostrf(t,4, 2, temperature);
     }
 
-    char tempTopic[40];
-    char humTopic[40];
+    if(r1 == HIGH){
+      strcpy(relay1, "false");
+    }else{
+      strcpy(relay1, "true");
+    }
 
-    sprintf(tempTopic, "users/%s/%s/sensor/temperature", mqtt_user, clientId.c_str());
-    sprintf(humTopic, "users/%s/%s/sensor/humidity", mqtt_user, clientId.c_str());
-
-    char tempData[40];
-    char humData[40];
-    sprintf(tempData, "{\"value\":%s,\"origin\":\"%s\"}", temperature, mqtt_alias);
-    sprintf(humData, "{\"value\":%s,\"origin\":\"%s\"}", humidity, mqtt_alias);
+    if(r2 == HIGH){
+      strcpy(relay2, "false");
+    }else{
+      strcpy(relay2, "true");
+    }
+    
+    char topic[40];
+    char data[40];
 
     //three iterations before publishing
     loopCounter++;
     if(loopCounter == 3){
-      Serial.print("publishing to topic: ");
-      Serial.print(tempTopic);
-      Serial.print(" with data: ");
-      Serial.println(tempData);
-      client.publish(tempTopic, tempData);
+      //publish temperature
+      sprintf(topic, "users/%s/%s/sensor/temperature", mqtt_user, clientId.c_str());
+      sprintf(data, "{\"value\":%s,\"origin\":\"%s\"}", temperature, mqtt_alias);
+      client.publish(topic, data);
+      logPublish(topic, data);
+      
+      //publish humidity
+      sprintf(topic, "users/%s/%s/sensor/humidity", mqtt_user, clientId.c_str());
+      sprintf(data, "{\"value\":%s,\"origin\":\"%s\"}", humidity, mqtt_alias);
+      client.publish(topic, data);
+      logPublish(topic, data);
 
-      Serial.print("publishing to topic: ");
-      Serial.print(humTopic);
-      Serial.print(" with data: ");
-      Serial.println(humData);
-      client.publish(humTopic, humData);
+      //publish relay1
+      sprintf(topic, "users/%s/%s/actuator/%s", mqtt_user, clientId.c_str(), relay1_alias);
+      sprintf(data, "{\"value\":%s,\"origin\":\"%s\"}", relay1, mqtt_alias);
+      client.publish(topic, data);
+      logPublish(topic, data);
 
+      //publish relay2
+      sprintf(topic, "users/%s/%s/actuator/%s", mqtt_user, clientId.c_str(), relay2_alias);
+      sprintf(data, "{\"value\":%s,\"origin\":\"%s\"}", relay2, mqtt_alias);
+      client.publish(topic, data);
+      logPublish(topic, data);
+      
       loopCounter = 0;
       Serial.println("6 seconds delay");
     }
   }
   // Wait 2 seconds before looping
   delay(2000);
+}
+
+void logPublish(char* topic, char* payload){
+  Serial.print("publishing to topic: ");
+  Serial.print(topic);
+  Serial.print(" with data: ");
+  Serial.println(payload);
 }
 
 void startAPConfigPortal(){
@@ -189,6 +216,8 @@ void startAPConfigPortal(){
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_pass);
   wifiManager.addParameter(&custom_mqtt_alias);
+  wifiManager.addParameter(&custom_relay1_alias);
+  wifiManager.addParameter(&custom_relay2_alias);
 
   String apNetworkName = "iot-" + clientId;
    
@@ -259,11 +288,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.println();
   Serial.print("With payload: ");
+  char payloadToChar[100];
+  sprintf(payloadToChar, "%s", payload);
   for (int i=0;i<length;i++) {
     Serial.print((char)payload[i]);
   }
+  
   Serial.println();
-
+  
   char currentTopic[50];
   char * params;
   params = strtok(topic, "/");
@@ -282,11 +314,28 @@ void callback(char* topic, byte* payload, unsigned int length) {
     sprintf(reportTopic, "users/%s/%s/register", mqtt_user, clientId.c_str());
     client.publish(reportTopic, "{\"sensors\": [ \"temperature\",\"humidity\" ], \"actuators\": [\"cooler\", \"ligth\"]}");
   }
+
+  if(strcmp(currentTopic,relay1_alias) == 0){
+    Serial.println("Updating relay 1 state");
+    StaticJsonBuffer<50> jsonBuffer;
+    JsonObject& data = jsonBuffer.parseObject(payloadToChar);      
+    data.printTo(Serial);
+    if(strcmp(data["value"],"true") == 0){
+      digitalWrite(RELAY1_PIN, LOW);
+    }else{
+      digitalWrite(RELAY1_PIN, HIGH);
+    }
+  }
   
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == 'true') {
-    digitalWrite(RELAY1_PIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
-  } else {
-    digitalWrite(RELAY1_PIN, HIGH);  // Turn the LED off by making the voltage HIGH
+  if(strcmp(currentTopic,relay2_alias) == 0){
+    Serial.println("Updating relay 2 state");
+    StaticJsonBuffer<50> jsonBuffer;
+    JsonObject& data = jsonBuffer.parseObject(payloadToChar);      
+    data.printTo(Serial);
+    if(strcmp(data["value"],"true") == 0){
+      digitalWrite(RELAY2_PIN, LOW);
+    }else{
+      digitalWrite(RELAY2_PIN, HIGH);
+    }
   }
 }
